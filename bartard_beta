@@ -1,0 +1,629 @@
+import SwiftUI
+import VisionKit
+import AVFoundation
+
+// MARK: - Models
+struct Product: Identifiable {
+    let id = UUID()
+    let name: String
+    let brand: String
+    let barcode: String
+}
+
+enum StockStatus: String {
+    case inStock = "in-stock"
+    case lowStock = "low-stock"
+    case outOfStock = "out-of-stock"
+}
+
+struct Price: Identifiable {
+    let id = UUID()
+    let retailer: String
+    let price: Double
+    let distance: Double
+    let stock: StockStatus
+    let url: String
+}
+
+// MARK: - Product Database
+final class ProductDatabase {
+    static let shared = ProductDatabase()
+
+    private let products: [String: Product] = [
+        "012000161551": Product(name: "Coca-Cola Classic 12oz Can (12 Pack)", brand: "Coca-Cola", barcode: "012000161551"),
+        "07874200619":  Product(name: "Tide Laundry Detergent 100oz", brand: "Tide", barcode: "07874200619"),
+        "03400001520":  Product(name: "Cheerios Cereal 18oz", brand: "General Mills", barcode: "03400001520"),
+        "07800011036":  Product(name: "Lays Classic Potato Chips", brand: "Frito-Lay", barcode: "07800011036")
+    ]
+
+    func getProduct(barcode: String) -> Product {
+        products[barcode] ?? Product(
+            name: "Product \(barcode.prefix(8))...",
+            brand: "Generic Brand",
+            barcode: barcode
+        )
+    }
+
+    func generatePrices(for barcode: String) -> [Price] {
+        let product = getProduct(barcode: barcode)
+        let basePrice = Double.random(in: 5...25)
+
+        let retailers: [(name: String, distance: Double, multiplier: Double, urlPrefix: String)] = [
+            ("Target",      1.2, 0.95, "https://www.target.com/s?searchTerm="),
+            ("Walmart",     2.3, 0.87, "https://www.walmart.com/search?q="),
+            ("Whole Foods", 0.8, 1.15, "https://www.amazon.com/s?k="),
+            ("Costco",      3.5, 0.80, "https://www.costco.com/CatalogSearch?keyword="),
+            ("CVS",         0.5, 1.08, "https://www.cvs.com/search?searchTerm=")
+        ]
+
+        func randomStock() -> StockStatus {
+            let r = Double.random(in: 0...1)
+            if r < 0.15 { return .outOfStock }
+            if r < 0.35 { return .lowStock }
+            return .inStock
+        }
+
+        return retailers.map { r in
+            let encoded = product.name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+            return Price(
+                retailer: r.name,
+                price: basePrice * r.multiplier,
+                distance: r.distance,
+                stock: randomStock(),
+                url: "\(r.urlPrefix)\(encoded)"
+            )
+        }
+        .sorted { $0.price < $1.price }
+    }
+}
+
+// MARK: - VisionKit DataScanner (iOS 16+)
+@available(iOS 16.0, *)
+struct DataScannerView: UIViewControllerRepresentable {
+    typealias UIViewControllerType = DataScannerViewController
+
+    let recognizedDataTypes: Set<DataScannerViewController.RecognizedDataType>
+    let qualityLevel: DataScannerViewController.QualityLevel
+    let recognizesMultipleItems: Bool
+    let isHighFrameRateTrackingEnabled: Bool
+    let isHighlightingEnabled: Bool
+
+    @Binding var scannedCode: String?
+    @Binding var isPresented: Bool
+    @Binding var errorMessage: String?
+
+    func makeUIViewController(context: Context) -> DataScannerViewController {
+        let vc = DataScannerViewController(
+            recognizedDataTypes: recognizedDataTypes,
+            qualityLevel: qualityLevel,
+            recognizesMultipleItems: recognizesMultipleItems,
+            isHighFrameRateTrackingEnabled: isHighFrameRateTrackingEnabled,
+            isHighlightingEnabled: isHighlightingEnabled
+        )
+        vc.delegate = context.coordinator
+        return vc
+    }
+
+    func updateUIViewController(_ uiViewController: DataScannerViewController, context: Context) {
+        if isPresented {
+            if !uiViewController.isScanning {
+                do {
+                    try uiViewController.startScanning()
+                } catch {
+                    errorMessage = "Could not start scanning: \(error.localizedDescription)"
+                    isPresented = false
+                }
+            }
+        } else {
+            if uiViewController.isScanning {
+                uiViewController.stopScanning()
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    final class Coordinator: NSObject, DataScannerViewControllerDelegate {
+        private let parent: DataScannerView
+
+        init(parent: DataScannerView) {
+            self.parent = parent
+        }
+
+        func dataScanner(_ dataScanner: DataScannerViewController, didTapOn item: RecognizedItem) {
+            handle(item)
+        }
+
+        func dataScanner(_ dataScanner: DataScannerViewController, didAdd addedItems: [RecognizedItem], allItems: [RecognizedItem]) {
+            guard let first = addedItems.first else { return }
+            handle(first)
+        }
+
+        private func handle(_ item: RecognizedItem) {
+            switch item {
+            case .barcode(let barcode):
+                if let value = barcode.payloadStringValue, !value.isEmpty {
+                    parent.scannedCode = value
+                    parent.isPresented = false
+                }
+            default:
+                break
+            }
+        }
+
+        func dataScanner(_ dataScanner: DataScannerViewController, didFailWithError error: Error) {
+            parent.errorMessage = "Scanner error: \(error.localizedDescription)"
+            parent.isPresented = false
+        }
+    }
+}
+
+// MARK: - Main Content View
+struct ContentView: View {
+    @State private var showingScanner = false
+    @State private var scannedCode: String?
+    @State private var manualCode = ""
+    @State private var product: Product?
+    @State private var prices: [Price] = []
+    @State private var isLoading = false
+
+    @State private var showError = false
+    @State private var errorMessage = ""
+
+    private var isScannerSupported: Bool {
+        if #available(iOS 16.0, *) {
+            return DataScannerViewController.isSupported && DataScannerViewController.isAvailable
+        }
+        return false
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                LinearGradient(
+                    gradient: Gradient(colors: [Color(hex: "0f172a"), Color(hex: "1e293b")]),
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea()
+
+                ScrollView {
+                    VStack(spacing: 20) {
+                        header
+
+                        scannerSection
+
+                        if isLoading {
+                            ProgressView("Processing...")
+                                .foregroundColor(.white)
+                                .padding()
+                        }
+
+                        if let product = product {
+                            resultsSection(product: product)
+                        }
+                    }
+                }
+            }
+            .toolbar(.hidden, for: .navigationBar)
+            // ✅ Fix: iOS 16-compatible single-argument onChange
+            .onChange(of: scannedCode) { newValue in
+                if let code = newValue {
+                    lookupBarcode(code)
+                }
+            }
+            .alert("Error", isPresented: $showError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(errorMessage)
+            }
+            .sheet(isPresented: $showingScanner) {
+                if #available(iOS 16.0, *) {
+                    ZStack {
+                        Color.black.ignoresSafeArea()
+
+                        DataScannerView(
+                            recognizedDataTypes: [
+                                .barcode(symbologies: [.ean8, .ean13, .upce, .code39, .code128, .qr])
+                            ],
+                            qualityLevel: .balanced,
+                            recognizesMultipleItems: false,
+                            isHighFrameRateTrackingEnabled: true,
+                            isHighlightingEnabled: true,
+                            scannedCode: $scannedCode,
+                            isPresented: $showingScanner,
+                            errorMessage: Binding(
+                                get: { nil },
+                                set: { msg in
+                                    if let msg {
+                                        errorMessage = msg
+                                        showError = true
+                                    }
+                                }
+                            )
+                        )
+
+                        VStack {
+                            HStack {
+                                Spacer()
+                                Button {
+                                    showingScanner = false
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 28, weight: .bold))
+                                        .foregroundStyle(.white.opacity(0.9))
+                                        .padding()
+                                }
+                            }
+                            Spacer()
+                        }
+                    }
+                    .presentationDetents([.large])
+                }
+            }
+        }
+    }
+
+    // MARK: - UI Pieces
+    private var header: some View {
+        VStack(spacing: 8) {
+            Text("PriceScan")
+                .font(.system(size: 42, weight: .heavy, design: .rounded))
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [Color(hex: "6366f1"), Color(hex: "ec4899")],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+
+            Text("Find the best prices at local retailers")
+                .font(.subheadline)
+                .foregroundColor(.gray)
+        }
+        .padding(.top, 40)
+        .padding(.bottom, 20)
+    }
+
+    private var scannerSection: some View {
+        VStack(spacing: 20) {
+            ZStack {
+                Color.black
+                    .frame(height: 260)
+                    .cornerRadius(16)
+
+                VStack(spacing: 10) {
+                    Image(systemName: "barcode.viewfinder")
+                        .font(.system(size: 42, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.9))
+
+                    Text(isScannerSupported ? "Ready to Scan" : "Scanner Unavailable")
+                        .font(.headline)
+                        .foregroundColor(.white)
+
+                    Text(isScannerSupported
+                         ? "Tap Start Scanner to scan a barcode"
+                         : "Requires iOS 16+ and a compatible device")
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
+                }
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(Color(hex: "6366f1"), lineWidth: 3)
+            )
+
+            Button(action: startScannerTapped) {
+                Text("Start Scanner")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(
+                        LinearGradient(
+                            colors: [Color(hex: "6366f1"), Color(hex: "4f46e5")],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .cornerRadius(12)
+                    .shadow(color: Color(hex: "6366f1").opacity(0.4), radius: 10)
+            }
+            .disabled(!isScannerSupported)
+            .opacity(isScannerSupported ? 1 : 0.5)
+
+            // Manual Input
+            HStack(spacing: 12) {
+                TextField("Enter barcode manually...", text: $manualCode)
+                    .textFieldStyle(.plain)
+                    .padding()
+                    .background(Color(hex: "0f172a").opacity(0.6))
+                    .cornerRadius(12)
+                    .foregroundColor(.white)
+                    .keyboardType(.numberPad)
+
+                Button(action: lookupManualCode) {
+                    Text("Lookup")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 12)
+                        .background(
+                            LinearGradient(
+                                colors: [Color(hex: "6366f1"), Color(hex: "4f46e5")],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .cornerRadius(12)
+                }
+            }
+
+            // Test Barcodes
+            VStack(spacing: 16) {
+                Text("🧪 Test Barcodes - Tap to Try")
+                    .font(.headline)
+                    .foregroundColor(.white)
+
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                    TestBarcodeButton(name: "Coca-Cola",     code: "012000161551") { lookupBarcode("012000161551") }
+                    TestBarcodeButton(name: "Tide Detergent",code: "07874200619")  { lookupBarcode("07874200619") }
+                    TestBarcodeButton(name: "Cheerios",      code: "03400001520")  { lookupBarcode("03400001520") }
+                    TestBarcodeButton(name: "Lays Chips",    code: "07800011036")  { lookupBarcode("07800011036") }
+                }
+            }
+            .padding(.top, 12)
+        }
+        .padding()
+        .background(Color(hex: "1e293b").opacity(0.6))
+        .cornerRadius(24)
+        .padding(.horizontal)
+    }
+
+    private func resultsSection(product: Product) -> some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(product.name)
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [Color(hex: "6366f1"), Color(hex: "ec4899")],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+
+                Text("\(product.brand) | UPC: \(product.barcode)")
+                    .font(.subheadline)
+                    .foregroundColor(.gray)
+            }
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(hex: "1e293b").opacity(0.6))
+            .cornerRadius(20)
+
+            ForEach(Array(prices.enumerated()), id: \.element.id) { index, price in
+                PriceCard(price: price, isBest: index == 0)
+            }
+        }
+        .padding(.horizontal)
+    }
+
+    // MARK: - Actions
+    private func startScannerTapped() {
+        guard isScannerSupported else {
+            errorMessage = "DataScanner is not supported or available on this device."
+            showError = true
+            return
+        }
+
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .denied, .restricted:
+            errorMessage = "Camera permission is denied. Enable it in Settings to scan."
+            showError = true
+        default:
+            showingScanner = true
+        }
+    }
+
+    private func lookupManualCode() {
+        let trimmed = manualCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        lookupBarcode(trimmed)
+        manualCode = ""
+    }
+
+    private func lookupBarcode(_ code: String) {
+        isLoading = true
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            product = ProductDatabase.shared.getProduct(barcode: code)
+            prices  = ProductDatabase.shared.generatePrices(for: code)
+            isLoading = false
+        }
+    }
+}
+
+// MARK: - Supporting Views
+struct TestBarcodeButton: View {
+    let name: String
+    let code: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(name)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.white)
+
+                Text(code)
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                    .fontDesign(.monospaced)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding()
+            .background(Color(hex: "6366f1").opacity(0.1))
+            .cornerRadius(12)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color(hex: "334155"), lineWidth: 2)
+            )
+        }
+    }
+}
+
+struct PriceCard: View {
+    let price: Price
+    let isBest: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text(price.retailer)
+                    .font(.title3)
+                    .fontWeight(.bold)
+                    .foregroundColor(.white)
+
+                Spacer()
+
+                if isBest {
+                    Text("✨ BEST PRICE")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 4)
+                        .background(
+                            LinearGradient(
+                                colors: [Color(hex: "6366f1"), Color(hex: "4f46e5")],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .cornerRadius(20)
+                }
+            }
+
+            Text(String(format: "$%.2f", price.price))
+                .font(.system(size: 36, weight: .heavy))
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [Color(hex: "6366f1"), Color(hex: "ec4899")],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+
+            HStack(spacing: 8) {
+                Image(systemName: "location.fill")
+                Text("\(String(format: "%.1f", price.distance)) miles away")
+            }
+            .font(.subheadline)
+            .foregroundColor(.gray)
+
+            HStack(spacing: 8) {
+                Image(systemName: "clock.fill")
+                Text("Updated: Today")
+            }
+            .font(.subheadline)
+            .foregroundColor(.gray)
+
+            stockPill
+
+            if let url = URL(string: price.url) {
+                Link(destination: url) {
+                    Text("View at \(price.retailer) →")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(
+                            LinearGradient(
+                                colors: [Color(hex: "6366f1"), Color(hex: "4f46e5")],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .cornerRadius(12)
+                }
+            } else {
+                Text("Invalid retailer link")
+                    .foregroundColor(.gray)
+            }
+        }
+        .padding()
+        .background(Color(hex: "1e293b").opacity(0.6))
+        .cornerRadius(20)
+        .overlay(
+            RoundedRectangle(cornerRadius: 20)
+                .stroke(isBest ? Color(hex: "6366f1") : Color(hex: "334155"), lineWidth: isBest ? 2 : 1)
+        )
+        .shadow(color: isBest ? Color(hex: "6366f1").opacity(0.3) : .clear, radius: 20)
+    }
+
+    private var stockPill: some View {
+        let (text, fg, bg, stroke): (String, Color, Color, Color) = {
+            switch price.stock {
+            case .inStock:
+                return ("In Stock",     Color(hex: "10b981"), Color(hex: "10b981").opacity(0.2), Color(hex: "10b981"))
+            case .lowStock:
+                return ("Low Stock",    Color(hex: "f59e0b"), Color(hex: "f59e0b").opacity(0.2), Color(hex: "f59e0b"))
+            case .outOfStock:
+                return ("Out of Stock", Color(hex: "ef4444"), Color(hex: "ef4444").opacity(0.2), Color(hex: "ef4444"))
+            }
+        }()
+
+        return Text(text)
+            .font(.caption)
+            .fontWeight(.semibold)
+            .foregroundColor(fg)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(bg)
+            .cornerRadius(20)
+            .overlay(
+                RoundedRectangle(cornerRadius: 20)
+                    .stroke(stroke, lineWidth: 1)
+            )
+    }
+}
+
+// MARK: - Color Extension
+extension Color {
+    init(hex: String) {
+        let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var int: UInt64 = 0
+        Scanner(string: hex).scanHexInt64(&int)
+        let a, r, g, b: UInt64
+        switch hex.count {
+        case 3:
+            (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
+        case 6:
+            (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
+        case 8:
+            (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
+        default:
+            (a, r, g, b) = (255, 255, 255, 0)
+        }
+        self.init(
+            .sRGB,
+            red:     Double(r) / 255,
+            green:   Double(g) / 255,
+            blue:    Double(b) / 255,
+            opacity: Double(a) / 255
+        )
+    }
+}
+
+// MARK: - Preview
+struct ContentView_Previews: PreviewProvider {
+    static var previews: some View {
+        ContentView()
+    }
+}
