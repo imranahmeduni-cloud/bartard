@@ -44,6 +44,10 @@ final class ProductDatabase {
         )
     }
 
+    func barcodeExists(_ barcode: String) -> Bool {
+        return products[barcode] != nil
+    }
+
     func generatePrices(for barcode: String) -> [Price] {
         let product = getProduct(barcode: barcode)
         let basePrice = Double.random(in: 5...25)
@@ -171,6 +175,18 @@ struct ContentView: View {
 
     @State private var showError = false
     @State private var errorMessage = ""
+    
+    init(
+        previewProduct: Product? = nil,
+        previewPrices: [Price] = [],
+        previewMessage: String? = nil,
+        previewShowError: Bool = false
+    ) {
+        _product = State(initialValue: previewProduct)
+        _prices = State(initialValue: previewPrices)
+        _errorMessage = State(initialValue: previewMessage ?? "")
+        _showError = State(initialValue: previewShowError)
+    }
 
     private var isScannerSupported: Bool {
         if #available(iOS 16.0, *) {
@@ -440,8 +456,14 @@ struct ContentView: View {
         isLoading = true
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 900_000_000)
+            if !ProductDatabase.shared.barcodeExists(code) {
+                errorMessage = "❌ Wrong barcode scanned. This product is not in the database."
+                showError = true
+                isLoading = false
+                return
+            }
             product = ProductDatabase.shared.getProduct(barcode: code)
-            prices  = ProductDatabase.shared.generatePrices(for: code)
+            prices = ProductDatabase.shared.generatePrices(for: code)
             isLoading = false
         }
     }
@@ -624,6 +646,35 @@ extension Color {
 // MARK: - Preview
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
-        ContentView()
+        let sampleProduct = Product(
+            name: "Coca-Cola Classic 12oz Can (12 Pack)",
+            brand: "Coca-Cola",
+            barcode: "012000161551"
+        )
+
+        let samplePrices: [Price] = [
+            Price(retailer: "Costco", price: 8.99, distance: 3.5, stock: .inStock,
+                  url: "https://www.costco.com/CatalogSearch?keyword=coke"),
+            Price(retailer: "Walmart", price: 9.49, distance: 2.3, stock: .lowStock,
+                  url: "https://www.walmart.com/search?q=coke"),
+            Price(retailer: "CVS", price: 10.99, distance: 0.5, stock: .outOfStock,
+                  url: "https://www.cvs.com/search?searchTerm=coke")
+        ]
+
+        Group {
+            ContentView(
+                previewProduct: sampleProduct,
+                previewPrices: samplePrices
+            )
+            .previewDisplayName("Valid Barcode — Results")
+
+            ContentView(
+                previewProduct: nil,
+                previewPrices: [],
+                previewMessage: "❌ Wrong barcode scanned. This product is not in the database.",
+                previewShowError: true
+            )
+            .previewDisplayName("Invalid Barcode — Alert")
+        }
     }
 }
