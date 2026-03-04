@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PriceScan Preview</title>
+
+<style>
+
+:root {
+    --bg: #f8fafc;
+    --text: #4d4d4d;
+    --card: #ffffff;
+    --subtext: #64748b;
+    --accent: #8182eb;
+    --accent-hover: #8f8aea;
+    --scanner-bg: #f1f5f9;
+    --border: #e2e8f0;
+    --price: #8182eb;
+}
+
+.dark {
+    --bg: #0f172a;
+    --text: #e5e7eb;
+    --card: #1e293b;
+    --subtext: #9ca3af;
+    --accent: #8182eb;
+    --accent-hover: #8f8aea;
+    --scanner-bg: #020617;
+    --border: #334155;
+    --price: #a5b4fc;
+}
+
+
+body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    transition: background 0.3s, color 0.3s;
+}
+
+.container {
+    max-width: 420px;
+    margin: auto;
+    padding: 20px;
+}
+
+.header {
+    text-align: center;
+    margin-top: 30px;
+    position: relative;
+}
+
+.header h1 {
+    margin: 0;
+    font-weight: 700;
+}
+
+.header p {
+    color: var(--subtext);
+    margin-top: 6px;
+}
+
+
+.theme-toggle {
+    position: absolute;
+    right: 0;
+    top: 0;
+    background: var(--card);
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+
+.card {
+    background: var(--card);
+    padding: 20px;
+    border-radius: 20px;
+    margin-top: 20px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.06);
+}
+
+.scanner-box {
+    background: var(--scanner-bg);
+    height: 220px;
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    border: 2px dashed var(--accent);
+}
+
+
+
+.button {
+    width: 100%;
+    padding: 14px;
+    border-radius: 12px;
+    border: none;
+    margin-top: 15px;
+    font-size: 16px;
+    font-weight: 600;
+    background: var(--accent);
+    color: white;
+    cursor: pointer;
+    transition: 0.2s;
+}
+
+.button:hover {
+    background: var(--accent-hover);
+}
+
+
+.input-row {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
+}
+
+input {
+    flex: 1;
+    padding: 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+    font-size: 14px;
+}
+
+input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(99,102,241,0.15);
+}
+
+
+.price-card {
+    background: var(--card);
+    padding: 16px;
+    border-radius: 16px;
+    margin-top: 12px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.05);
+}
+
+.price {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--price);
+}
+
+.badge {
+    background: var(--accent);
+    color: white;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+}
+
+.stock {
+    margin-top: 8px;
+    color: #10b981;
+    font-size: 13px;
+}
+
+.link-btn {
+    margin-top: 10px;
+    display: block;
+    text-align: center;
+    background: #eef2ff;
+    padding: 10px;
+    border-radius: 10px;
+    text-decoration: none;
+    color: #4f46e5;
+    font-weight: 600;
+}
+
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+<div class="header">
+<button class="theme-toggle" onclick="toggleTheme()">🌙</button>
+<h1>PriceScan</h1>
+<p>Compare prices instantly</p>
+</div>
+
+<div class="card">
+
+<div class="scanner-box">
+<div style="font-size:40px">📷</div>
+<p>Ready to Scan</p>
+</div>
+
+<button class="button">Start Scanner</button>
+
+<div class="input-row">
+<input placeholder="Enter barcode manually">
+<button class="button" style="width:120px">Lookup</button>
+</div>
+
+</div>
+
+<div class="card">
+<h3>Coca-Cola Classic 12oz Can (12 Pack)</h3>
+<p style="color:var(--subtext)">Coca-Cola • UPC 012000161551</p>
+</div>
+
+<div class="price-card">
+<div style="display:flex; justify-content:space-between;">
+<strong>Walmart</strong>
+<span class="badge">BEST</span>
+</div>
+<div class="price">$8.99</div>
+<div style="color:var(--subtext)">2.3 miles away</div>
+<div class="stock">In Stock</div>
+<a href="#" class="link-btn">View →</a>
+</div>
+
+<div class="price-card">
+<strong>Target</strong>
+<div class="price">$9.49</div>
+<div style="color:var(--subtext)">1.2 miles away</div>
+<div class="stock">Low Stock</div>
+<a href="#" class="link-btn">View →</a>
+</div>
+
+</div>
+
+<script>
+
+function toggleTheme() {
+    document.body.classList.toggle("dark")
+
+    if(document.body.classList.contains("dark")) {
+        localStorage.setItem("theme","dark")
+    } else {
+        localStorage.setItem("theme","light")
+    }
+}
+
+
+if(localStorage.getItem("theme") === "dark") {
+    document.body.classList.add("dark")
+}
+
+</script>
+
+</body>
+</html>
